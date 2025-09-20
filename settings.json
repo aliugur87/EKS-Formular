@@ -1,0 +1,6 @@
+{
+  "claude_api_key": "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",
+  "auto_customer_creation": true,
+  "default_template": "eks_standard.xlsx",
+  "backup_enabled": true
+}
