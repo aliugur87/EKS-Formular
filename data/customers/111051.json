@@ -82,6 +82,13 @@
       "period": "JAN-JUN",
       "processed_date": "2025-09-20 22:39:31",
       "confidence": 62.96296296296296
+    },
+    {
+      "file_path": "bwa.xlsx",
+      "period": "JAN-JUN",
+      "year": 2025,
+      "processed_date": "2025-09-21 00:38:25",
+      "confidence": 92.85714285714286
     }
   ]
 }
