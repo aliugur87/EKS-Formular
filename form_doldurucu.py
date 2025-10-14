@@ -576,19 +576,27 @@ class EKSFormFiller(ctk.CTk):
         header_frame = ctk.CTkFrame(self, height=80, fg_color="#2b2b2b")
         header_frame.pack(fill="x", padx=10, pady=5)
         header_frame.pack_propagate(False)
-        
+
         # Titel und Controls in Header
         title_label = ctk.CTkLabel(header_frame, text=self.texts["app_title"], 
-                                 font=ctk.CTkFont(size=24, weight="bold"))
+                                font=ctk.CTkFont(size=24, weight="bold"))
         title_label.pack(side="left", padx=20, pady=20)
-        
+
         # Einstellungen Button
         settings_btn = ctk.CTkButton(header_frame, text="⚙️", width=40, height=40,
-                                   command=self.open_settings)
+                                command=self.open_settings)
         settings_btn.pack(side="right", padx=10, pady=20)
+
+        # --- YENİ EKLENEN VERSİYON ETİKETİ ---
+        version_label = ctk.CTkLabel(header_frame, text=APP_VERSION, 
+                                    font=ctk.CTkFont(size=11), text_color="gray")
+        version_label.pack(side="right", padx=10, pady=5, anchor="s")
+        # --- KOD SONU ---
+        
         
         # Dil seçimi
         language_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
+        
         language_frame.pack(side="right", padx=10, pady=20)
         
         ctk.CTkLabel(language_frame, text=self.texts["language"] + ":", 
