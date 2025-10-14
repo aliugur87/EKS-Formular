@@ -522,6 +522,7 @@ class EKSFormFiller(ctk.CTk):
         
         # Grundkonfiguration
         self.title("EKS Formular Ausfüller Pro")
+        self.iconbitmap("icon.ico")
         self.geometry("1400x900")
         self.configure(fg_color="#1a1a1a")
         

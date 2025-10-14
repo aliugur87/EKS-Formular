@@ -22,7 +22,7 @@ Almanya'daki serbest meslek sahipleri için EKS (Einkommen aus selbständiger T�
 
 Bu uygulamayı kullanmak için Python veya herhangi bir kütüphane kurmanıza gerek yoktur.
 
-1.  **Uygulamayı İndirin:** Projenin [Releases (Sürümler) sayfasına](https://github.com/aliugur87/eks-1909/releases) gidin.
+1.  **Uygulamayı İndirin:** Projenin [Releases (Sürümler) sayfasına](https://github.com/aliugur87/EKS-Formular/releases) gidin.
 2.  En son sürümün altındaki "Assets" bölümünden `.exe` uzantılı dosyayı indirin.
 3.  İndirdiğiniz `EKS_Form_Doldurucu.exe` dosyasına çift tıklayarak uygulamayı başlatın.
 
@@ -39,6 +39,6 @@ Yapay zeka destekli eşleştirme önerilerini kullanmak için:
 
 Projeyi yerel olarak geliştirmek isterseniz:
 
-1.  Depoyu klonlayın: `git clone https://github.com/aliugur87/eks-1909.git`
+1.  Depoyu klonlayın: `git clone https://github.com/aliugur87/EKS-Formular.git`
 2.  Gerekli kütüphaneleri yükleyin: `pip install -r requirements.txt`
 3.  Uygulamayı çalıştırın: `python form_doldurucu.py`
