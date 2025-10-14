@@ -5,7 +5,7 @@ import os
 from datetime import datetime, timedelta
 from tkinter import filedialog, messagebox
 from typing import Dict, List, Optional, Tuple
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment
 import requests
@@ -87,11 +87,8 @@ class Customer:
     created_date: str
     default_template: str = "eks_standard.xlsx"
     notes: str = ""
-    bwa_history: List[Dict] = None
-    
-    def __post_init__(self):
-        if self.bwa_history is None:
-            self.bwa_history = []
+    bwa_history: List[Dict] = field(default_factory=list) # Bu, dışa aktarım geçmişi
+    bwa_upload_history: List[Dict] = field(default_factory=list) # Bu, YENİ yükleme geçmişi
 
 @dataclass 
 class MappingRule:
@@ -403,6 +400,24 @@ class BWAParser:
         unmapped.sort(key=lambda x: sum(abs(v) for v in x['values']), reverse=True)
         return unmapped[:5]
     
+    def load_data_from_json(self, json_data: str, customer_info: Dict) -> Tuple[bool, str]:
+        """Kaydedilmiş JSON verisinden BWA DataFrame'ini yeniden oluşturur."""
+        try:
+            # Kayıtlı JSON'dan DataFrame'i geri yükle
+            self.bwa_data = pd.read_json(json_data, orient='split')
+            self.customer_info = customer_info
+            
+            # Mevcut ayları yeniden hesapla
+            month_cols = ['JAN', 'FEB', 'MRZ', 'APR', 'MAI', 'JUN', 'JUL', 'AUG', 'SEP', 'OKT', 'NOV', 'DEZ']
+            self.available_months = [col for col in self.bwa_data.columns if col in month_cols]
+            
+            return True, f"BWA aus Verlauf geladen: {len(self.available_months)} Monate verfügbar"
+        except Exception as e:
+            self.bwa_data = None
+            self.customer_info = None
+            self.available_months = []
+            return False, f"Fehler beim Laden aus Verlauf: {str(e)}"
+    
     def _get_ai_suggestions(self, unmapped_accounts: List[Dict]) -> List[Dict]:
         """Claude API'den eşleştirme önerileri al - DÜZELTİLMİŞ"""
         if not self.claude_api or not self.claude_api.is_available():
@@ -451,15 +466,24 @@ class CustomerManager:
             return False
     
     def load_customer(self, customer_code: str) -> Optional[Customer]:
-        try:
-            file_path = os.path.join(self.customers_dir, f"{customer_code}.json")
-            if os.path.exists(file_path):
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                return Customer(**data)
-        except Exception:
-            pass
-        return None
+            try:
+                file_path = os.path.join(self.customers_dir, f"{customer_code}.json")
+                if os.path.exists(file_path):
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    
+                    # --- YENİ EKLENEN KONTROL ---
+                    # Eski JSON dosyalarında bu alan olmayabilir, hata vermemesi için ekle
+                    if 'bwa_upload_history' not in data:
+                        data['bwa_upload_history'] = []
+                    # --- KONTROL SONU ---
+
+                    return Customer(**data)
+            except Exception as e:
+                # Hata ayıklama için print eklemek faydalı olabilir
+                print(f"Error loading customer {customer_code}: {e}")
+                pass
+            return None
     
     def get_all_customers(self) -> List[Customer]:
         customers = []
@@ -495,6 +519,7 @@ class EKSFormFiller(ctk.CTk):
         self.selected_start_month = "JAN"
         self.selected_end_month = "JUN"
         self.selected_year = datetime.now().year
+        self.total_labels = {}
         
         # API Key'i yükle
         self.load_api_settings()
@@ -660,6 +685,19 @@ class EKSFormFiller(ctk.CTk):
         self.export_btn = ctk.CTkButton(left_panel, text=self.texts["export_eks"],
                                        command=self.export_eks, height=40, state="disabled")
         self.export_btn.pack(pady=10, padx=20, fill="x")
+                
+        
+        # --- YENİ ARAYÜZ BÖLÜMÜ BAŞLANGICI ---
+        history_label = ctk.CTkLabel(left_panel, text="Geçmiş BWA Yüklemeleri", 
+                                     font=ctk.CTkFont(size=14, weight="bold"))
+        history_label.pack(pady=(20, 5), padx=20)
+        
+        self.bwa_history_frame = ctk.CTkScrollableFrame(left_panel, fg_color="#3b3b3b")
+        self.bwa_history_frame.pack(fill="both", expand=True, padx=20, pady=(0, 20))
+        # --- YENİ ARAYÜZ BÖLÜMÜ SONU ---
+
+        # Rechts: Mapping Ergebnisse
+        right_panel = ctk.CTkFrame(content_frame, fg_color="#2b2b2b")
         
         # Rechts: Mapping Ergebnisse
         right_panel = ctk.CTkFrame(content_frame, fg_color="#2b2b2b")
@@ -722,9 +760,10 @@ class EKSFormFiller(ctk.CTk):
             self.customer_combo.configure(values=["Keine Kunden"])
     
     def on_customer_selected(self, selection):
-        if " - " in selection:
-            customer_code = selection.split(" - ")[0]
-            self.current_customer = self.customer_manager.load_customer(customer_code)
+            if " - " in selection:
+                customer_code = selection.split(" - ")[0]
+                self.current_customer = self.customer_manager.load_customer(customer_code)
+                self.display_bwa_history() # --- BU SATIRI EKLE ---
     
     def create_new_customer(self):
         dialog = CustomerDialog(self, self.texts)
@@ -758,33 +797,101 @@ class EKSFormFiller(ctk.CTk):
 # form_doldurucu.py dosyasında
 
     def on_bwa_loaded(self, success: bool, message: str, file_path: str):
+            if success:
+                self.bwa_file_path = file_path
+                self.bwa_status_label.configure(text="✅ " + self.texts["file_loaded"], text_color="green")
+                self.mapping_btn.configure(state="normal")
+                self.update_bwa_info()
+                
+                # BWA'dan gelen müşteri bilgisine göre işlem yap
+                if self.bwa_parser.customer_info:
+                    info = self.bwa_parser.customer_info
+                    customer_code = info["code"]
+                    
+                    existing_customer = self.customer_manager.load_customer(customer_code)
+                    
+                    if not existing_customer:
+                        self.auto_create_customer()
+                    else:
+                        self.current_customer = existing_customer
+                        new_selection = f"{existing_customer.code} - {existing_customer.name}"
+                        self.customer_combo.set(new_selection)
+
+                # --- GÜNCELLENMİŞ KAYDETME BÖLÜMÜ ---
+                # Yükleme geçmişini VERİ olarak kaydet
+                if self.current_customer:
+                    # pandas DataFrame'i JSON string'ine dönüştür
+                    bwa_data_json = self.bwa_parser.bwa_data.to_json(orient='split')
+                    
+                    # Yeni geçmiş kaydını oluştur
+                    new_entry = {
+                        "date": datetime.now().strftime("%Y-%m-%d %H:%M"), # Daha okunaklı tarih
+                        "file_name": os.path.basename(file_path),
+                        "bwa_data_json": bwa_data_json,
+                        "customer_info": self.bwa_parser.customer_info # Müşteri bilgisini de sakla
+                    }
+                    
+                    # Müşterinin geçmiş listesine ekle
+                    self.current_customer.bwa_upload_history.append(new_entry)
+                    self.customer_manager.save_customer(self.current_customer)
+                    self.display_bwa_history() # Geçmiş listesini yenile
+                # --- GÜNCELLENMİŞ BÖLÜM SONU ---
+                    
+            else:
+                self.bwa_status_label.configure(text="❌ " + message, text_color="red")
+
+
+    def display_bwa_history(self):
+        """Müşterinin geçmiş BWA yüklemelerini arayüzde gösterir."""
+        for widget in self.bwa_history_frame.winfo_children():
+            widget.destroy()
+
+        if self.current_customer and self.current_customer.bwa_upload_history:
+            # Geçmişi tarihe göre ters sırala (en yeni en üstte)
+            sorted_history = sorted(self.current_customer.bwa_upload_history, key=lambda x: x['date'], reverse=True)
+            
+            for entry in sorted_history[:10]: # Son 10 kaydı göster
+                date_str = entry['date']
+                file_name = entry['file_name']
+                
+                entry_frame = ctk.CTkFrame(self.bwa_history_frame, fg_color="transparent")
+                entry_frame.pack(fill="x", pady=2)
+                
+                btn_text = f"💾 {date_str} - {file_name}"
+                
+                btn = ctk.CTkButton(
+                    entry_frame,
+                    text=btn_text,
+                    anchor="w",
+                    fg_color="#4a4a4a",
+                    hover_color="#555555",
+                    # Lambda kullanarak doğru geçmiş girdisini fonksiyona gönder
+                    command=lambda e=entry: self.load_bwa_from_history(e)
+                )
+                btn.pack(fill="x")
+        else:
+            ctk.CTkLabel(self.bwa_history_frame, text="Geçmiş yükleme yok.").pack(pady=10)
+
+    def load_bwa_from_history(self, history_entry: Dict):
+        """Geçmiş kayıttan bir BWA verisini yükler."""
+        self.bwa_status_label.configure(text=self.texts["loading"])
+        
+        # Kaydedilmiş JSON verisini ve müşteri bilgisini al
+        json_data = history_entry['bwa_data_json']
+        customer_info = history_entry['customer_info']
+        
+        # Bu işlem çok hızlı olacağı için ayrı bir thread'e gerek yok
+        success, message = self.bwa_parser.load_data_from_json(json_data, customer_info)
+        
         if success:
-            self.bwa_file_path = file_path
-            self.bwa_status_label.configure(text="✅ " + self.texts["file_loaded"], text_color="green")
+            # Artık bir dosya yoluna bağlı değiliz
+            self.bwa_file_path = None 
+            self.bwa_status_label.configure(text=f"✅ Verlauf geladen: {history_entry['file_name']}", text_color="green")
             self.mapping_btn.configure(state="normal")
             self.update_bwa_info()
-            
-            # --- DÜZELTİLMİŞ BÖLÜM BAŞLANGICI ---
-            if self.bwa_parser.customer_info:
-                info = self.bwa_parser.customer_info
-                customer_code = info["code"]
-                
-                # BWA'dan gelen müşteri sistemde var mı diye kontrol et
-                existing_customer = self.customer_manager.load_customer(customer_code)
-                
-                if not existing_customer:
-                    # Müşteri yoksa, yeni müşteri oluştur
-                    self.auto_create_customer()
-                else:
-                    # Müşteri varsa, onu mevcut müşteri olarak ayarla
-                    self.current_customer = existing_customer
-                    # Combobox'ı da bu müşteriyle güncelle
-                    new_selection = f"{existing_customer.code} - {existing_customer.name}"
-                    self.customer_combo.set(new_selection)
-            # --- DÜZELTİLMİŞ BÖLÜM SONU ---
-                
         else:
             self.bwa_status_label.configure(text="❌ " + message, text_color="red")
+            self.mapping_btn.configure(state="disabled")
     
     def update_bwa_info(self):
         for widget in self.bwa_info_frame.winfo_children():
@@ -903,95 +1010,72 @@ class EKSFormFiller(ctk.CTk):
 
 
     def display_mapping_results(self):
-            # Clear previous results
+            # Önceki sonuçları ve etiket referanslarını temizle
             for widget in self.results_frame.winfo_children():
                 widget.destroy()
+            self.total_labels = {}
             
-            if not self.extracted_data:
+            if not self.extracted_data or not any(self.extracted_data.values()):
                 ctk.CTkLabel(self.results_frame, text="Keine Ergebnisse").pack(pady=20)
                 return
+
+            # Sütun ağırlıklarını ayarla
+            self.results_frame.grid_columnconfigure(0, weight=1, minsize=50)   # Pos.
+            self.results_frame.grid_columnconfigure(1, weight=5, minsize=250)  # Beschreibung
             
-            total_confidence = 0
-            valid_mappings = 0
+            months = list(next(iter(self.extracted_data.values())).get('months', []))
+            num_month_cols = len(months)
             
-            for field, data in self.extracted_data.items():
-                if field.startswith('_'):  # Skip special fields
-                    continue
-                    
-                # Result Frame
-                result_frame = ctk.CTkFrame(self.results_frame, fg_color="#2b2b2b")
-                result_frame.pack(fill="x", pady=5, padx=10)
+            for i in range(num_month_cols):
+                self.results_frame.grid_columnconfigure(i + 2, weight=2, minsize=100) # Aylık Sütunlar
+            self.results_frame.grid_columnconfigure(num_month_cols + 2, weight=3, minsize=120) # Gesamt
+
+            # === Başlık Satırı (Grid ile mükemmel hizalama) ===
+            header_font = ctk.CTkFont(size=12, weight="bold")
+            header_fg_color = "#333333"
+            
+            ctk.CTkLabel(self.results_frame, text="Pos.", font=header_font, fg_color=header_fg_color, corner_radius=0, anchor="w").grid(row=0, column=0, sticky="ew", padx=(0,1), pady=(0,1))
+            ctk.CTkLabel(self.results_frame, text="Beschreibung", font=header_font, fg_color=header_fg_color, corner_radius=0, anchor="w").grid(row=0, column=1, sticky="ew", padx=(0,1), pady=(0,1))
+            for i, month in enumerate(months):
+                ctk.CTkLabel(self.results_frame, text=month, font=header_font, fg_color=header_fg_color, corner_radius=0).grid(row=0, column=i + 2, sticky="ew", padx=(0,1), pady=(0,1))
+            ctk.CTkLabel(self.results_frame, text="Gesamt", font=header_font, fg_color=header_fg_color, corner_radius=0).grid(row=0, column=num_month_cols + 2, sticky="ew", padx=(0,1), pady=(0,1))
+
+            # === Veri Satırları ===
+            row_index = 1
+            sorted_fields = sorted([k for k in self.extracted_data.keys() if not k.startswith('_')])
+
+            for field in sorted_fields:
+                data = self.extracted_data[field]
                 
-                # Header mit Confidence
-                confidence = data.get('confidence', 0)
-                color = "#4CAF50" if confidence > 80 else "#FF9800" if confidence > 50 else "#F44336"
-                
-                header_frame = ctk.CTkFrame(result_frame, fg_color="transparent")
-                header_frame.pack(fill="x", padx=10, pady=5)
-                
-                field_label = ctk.CTkLabel(header_frame, text=f"{field}: {data['description']}", 
-                                        font=ctk.CTkFont(weight="bold"))
-                field_label.pack(side="left")
-                
-                confidence_label = ctk.CTkLabel(header_frame, text=f"{confidence}%", 
-                                            text_color=color, font=ctk.CTkFont(weight="bold"))
-                confidence_label.pack(side="right")
-                
-                # Source
-                source_label = ctk.CTkLabel(result_frame, text=f"Quelle: {data['source']}", 
-                                        font=ctk.CTkFont(size=12))
-                source_label.pack(anchor="w", padx=20, pady=2)
-                
-                # Monatswerte
-                values = data['values']
-                months = data.get('months', [])
-                
-                if months and values:
-                    values_frame = ctk.CTkFrame(result_frame, fg_color="#3b3b3b")
-                    values_frame.pack(fill="x", padx=20, pady=5)
-                    
-                    for month, value in zip(months, values):
-                        value_text = f"{value:,.0f} €" if value is not None else "N/A"
-                        month_frame = ctk.CTkFrame(values_frame, fg_color="transparent")
-                        month_frame.pack(side="left", padx=5, pady=5)
-                        
-                        ctk.CTkLabel(month_frame, text=month, font=ctk.CTkFont(size=10)).pack()
-                        ctk.CTkLabel(month_frame, text=value_text, font=ctk.CTkFont(size=12, weight="bold")).pack()
-                
-                # Gesamt
+                # EKS Kodu ve Açıklama
+                ctk.CTkLabel(self.results_frame, text=field, font=ctk.CTkFont(weight="bold"), anchor="w").grid(row=row_index, column=0, sticky="w", padx=10, pady=8)
+                ctk.CTkLabel(self.results_frame, text=data['description'], anchor="w").grid(row=row_index, column=1, sticky="ew", padx=5)
+
+                # Aylık Değerler (Düzenlenebilir)
+                for i, value in enumerate(data['values']):
+                    EditableLabel(self.results_frame, row_index, i + 2, value, self.update_data_value)
+
+                # Toplam
                 total = data.get('total', 0)
-                total_label = ctk.CTkLabel(result_frame, text=f"Gesamt: {total:,.0f} €", 
-                                        font=ctk.CTkFont(size=14, weight="bold"))
-                total_label.pack(anchor="w", padx=20, pady=5)
+                self.total_labels[field] = EditableLabel(self.results_frame, row_index, num_month_cols + 2, total, lambda r,c,v: None, is_total=True)
                 
-                if confidence > 0:
-                    total_confidence += confidence
-                    valid_mappings += 1
-            
-            # Summary
-            if valid_mappings > 0:
-                avg_confidence = total_confidence / valid_mappings
-                summary_frame = ctk.CTkFrame(self.results_frame, fg_color="#2b2b2b")
-                summary_frame.pack(fill="x", pady=20, padx=10)
+                # Ayırıcı Çizgi
+                separator = ctk.CTkFrame(self.results_frame, height=1, fg_color="#3a3a3a")
+                separator.grid(row=row_index + 1, column=0, columnspan=num_month_cols + 3, sticky="ew")
                 
-                summary_text = f"Durchschnittliche Zuordnung: {avg_confidence:.1f}% ({valid_mappings}/{len([k for k in self.extracted_data.keys() if not k.startswith('_')])} Felder)"
-                ctk.CTkLabel(summary_frame, text=summary_text, 
-                            font=ctk.CTkFont(size=16, weight="bold")).pack(pady=20)
-            
-            # --- İYİLEŞTİRİLMİŞ BÖLÜM BAŞLANGICI ---
-            # Claude AI Suggestions veya Durumunu göster
+                row_index += 2 # Ayırıcı için ekstra satır atla
+                
+            # === AI Önerileri (tablonun altında) ===
+            row_index += 1
             if '_ai_suggestions' in self.extracted_data and self.extracted_data['_ai_suggestions']:
-                self.display_ai_suggestions(self.extracted_data['_ai_suggestions'])
+                ai_frame = ctk.CTkFrame(self.results_frame, fg_color="transparent")
+                ai_frame.grid(row=row_index, column=0, columnspan=num_month_cols + 3, sticky="ew")
+                self.display_ai_suggestions(self.extracted_data['_ai_suggestions']) # display_ai_suggestions'ı bu çerçeveye çizecek şekilde ayarlamak gerekebilir
             elif '_ai_status' in self.extracted_data:
-                # AI durumu için bir çerçeve oluştur
-                ai_status_frame = ctk.CTkFrame(self.results_frame, fg_color="#4a4a4a") # Nötr bir renk
-                ai_status_frame.pack(fill="x", pady=10, padx=10)
-                
+                ai_status_frame = ctk.CTkFrame(self.results_frame, fg_color="#4a4a4a")
+                ai_status_frame.grid(row=row_index, column=0, columnspan=num_month_cols + 3, sticky="ew", pady=20, padx=10)
                 status_text = f"🤖 AI Durumu: {self.extracted_data['_ai_status']}"
-                
-                ctk.CTkLabel(ai_status_frame, text=status_text, 
-                            font=ctk.CTkFont(size=12)).pack(pady=10, padx=10)
-            # --- İYİLEŞTİRİLMİŞ BÖLÜM SONU ---
+                ctk.CTkLabel(ai_status_frame, text=status_text, font=ctk.CTkFont(size=12)).pack(pady=10, padx=10)
     
     def display_ai_suggestions(self, suggestions: List[Dict]):
         """Claude AI önerilerini gösterir"""
@@ -1435,6 +1519,23 @@ Konsol çıktısını kontrol edin."""
         confidences = [data.get('confidence', 0) for field, data in self.extracted_data.items() if not field.startswith('_')]
         return sum(confidences) / len(confidences) if confidences else 0.0
     
+    def update_data_value(self, data_row_index: int, month_index: int, new_value: float):
+            """EditableLabel'dan gelen geri bildirimi işler ve veriyi günceller."""
+            # Hangi EKS alanının güncellendiğini bul
+            fields = sorted([k for k in self.extracted_data.keys() if not k.startswith('_')])
+            field_key = fields[data_row_index - 1] # -1 çünkü başlık satırı var
+            
+            # Arka plan verisini güncelle
+            self.extracted_data[field_key]['values'][month_index] = new_value
+            
+            # Satır toplamını yeniden hesapla
+            new_total = sum(v for v in self.extracted_data[field_key]['values'] if v is not None)
+            self.extracted_data[field_key]['total'] = new_total
+            
+            # Arayüzdeki toplam etiketini widget referansı üzerinden güncelle
+            if field_key in self.total_labels:
+                self.total_labels[field_key].update_text(new_total)
+    
 
 class CustomerDialog(ctk.CTkToplevel):
     def __init__(self, parent, texts):
@@ -1783,6 +1884,79 @@ class TemplateManager:
             if file.endswith('.xlsx'):
                 templates.append(file)
         return sorted(templates)
+
+class EditableLabel:
+    """Tıklandığında CTkEntry'ye dönüşen, fare etkileşimli bir etiket widget'ı."""
+    def __init__(self, master, row, column, text, callback, is_total=False):
+        self.master = master
+        self.row = row
+        self.column = column
+        self.callback = callback
+        
+        # Ana widget'ın arka plan rengini al
+        self.original_bg = master.cget("fg_color")
+        
+        self.value = text if isinstance(text, (int, float)) else 0.0
+        display_text = f"{self.value:,.2f} €" if text is not None else "N/A"
+        
+        font_weight = "bold" if is_total else "normal"
+        self.font = ctk.CTkFont(size=12, weight=font_weight)
+        
+        # Etiketi bir çerçeve içine yerleştirerek daha iyi kontrol sağlıyoruz
+        self.frame = ctk.CTkFrame(master, fg_color="transparent")
+        self.frame.grid(row=row, column=column, sticky="ew")
+        
+        self.label = ctk.CTkLabel(self.frame, text=display_text, font=self.font, anchor="e")
+        self.label.pack(fill="x", padx=10, pady=8) # Dikey ve yatay boşluk ekle
+        
+        # Etkileşim için olayları bağla
+        self.label.bind("<Button-1>", self._on_click)
+        self.label.bind("<Enter>", self._on_enter)
+        self.label.bind("<Leave>", self._on_leave)
+        
+        self.entry = None
+
+    def _on_enter(self, event):
+        """Fare üzerine geldiğinde görsel geri bildirim verir."""
+        self.label.configure(fg_color="#3a3a3a", cursor="hand2")
+
+    def _on_leave(self, event):
+        """Fare ayrıldığında eski haline döner."""
+        self.label.configure(fg_color="transparent", cursor="")
+
+    def _on_click(self, event):
+        """Etikete tıklandığında düzenleme modunu başlatır."""
+        # Mevcut değeri al
+        clean_text = f"{self.value:.2f}"
+        
+        self.entry = ctk.CTkEntry(self.frame, font=self.font, justify="right")
+        self.entry.insert(0, clean_text)
+        self.entry.pack(fill="x", padx=10, pady=8)
+        self.entry.focus_set()
+        
+        self.label.pack_forget() # Etiketi gizle
+        
+        self.entry.bind("<Return>", self._on_save)
+        self.entry.bind("<FocusOut>", self._on_save)
+
+    def _on_save(self, event):
+        """Değeri kaydeder ve tekrar etiket moduna döner."""
+        new_value_str = self.entry.get().replace(",", ".")
+        try:
+            self.value = float(new_value_str)
+            # Ana uygulamadaki veriyi güncellemek için callback fonksiyonunu çağır
+            self.callback(self.row, self.column - 2, self.value)
+        except (ValueError, TypeError):
+            pass # Geçersiz giriş varsa, değişikliği yoksay
+
+        self.label.configure(text=f"{self.value:,.2f} €")
+        self.entry.destroy()
+        self.label.pack(fill="x", padx=10, pady=8)
+
+    def update_text(self, new_value):
+        """Dışarıdan değeri güncellemek için kullanılır."""
+        self.value = new_value
+        self.label.configure(text=f"{self.value:,.2f} €")
 
 
 # Hauptprogramm
