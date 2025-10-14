@@ -755,6 +755,8 @@ class EKSFormFiller(ctk.CTk):
             
             threading.Thread(target=load_thread, daemon=True).start()
     
+# form_doldurucu.py dosyasında
+
     def on_bwa_loaded(self, success: bool, message: str, file_path: str):
         if success:
             self.bwa_file_path = file_path
@@ -762,8 +764,25 @@ class EKSFormFiller(ctk.CTk):
             self.mapping_btn.configure(state="normal")
             self.update_bwa_info()
             
-            if self.bwa_parser.customer_info and not self.current_customer:
-                self.auto_create_customer()
+            # --- DÜZELTİLMİŞ BÖLÜM BAŞLANGICI ---
+            if self.bwa_parser.customer_info:
+                info = self.bwa_parser.customer_info
+                customer_code = info["code"]
+                
+                # BWA'dan gelen müşteri sistemde var mı diye kontrol et
+                existing_customer = self.customer_manager.load_customer(customer_code)
+                
+                if not existing_customer:
+                    # Müşteri yoksa, yeni müşteri oluştur
+                    self.auto_create_customer()
+                else:
+                    # Müşteri varsa, onu mevcut müşteri olarak ayarla
+                    self.current_customer = existing_customer
+                    # Combobox'ı da bu müşteriyle güncelle
+                    new_selection = f"{existing_customer.code} - {existing_customer.name}"
+                    self.customer_combo.set(new_selection)
+            # --- DÜZELTİLMİŞ BÖLÜM SONU ---
+                
         else:
             self.bwa_status_label.configure(text="❌ " + message, text_color="red")
     
@@ -798,74 +817,82 @@ class EKSFormFiller(ctk.CTk):
                     self.on_customer_selected(new_selection)
     
     def perform_mapping(self):
-        """DÜZELTİLMİŞ perform_mapping fonksiyonu"""
-        if self.bwa_parser.bwa_data is None or self.bwa_parser.bwa_data.empty:
-            return
-        
-        self.mapping_btn.configure(text=self.texts["processing"], state="disabled")
-        
-        # Progress göstergesi
-        progress_window = ctk.CTkToplevel(self)
-        progress_window.title("Verarbeitung...")
-        progress_window.geometry("300x100")
-        progress_window.transient(self)
-        progress_window.grab_set()
-        
-        # Progress window'u merkeze al
-        progress_window.update_idletasks()
-        x = (progress_window.winfo_screenwidth() // 2) - (150)
-        y = (progress_window.winfo_screenheight() // 2) - (50)
-        progress_window.geometry(f"300x100+{x}+{y}")
-        
-        progress_label = ctk.CTkLabel(progress_window, text="Daten werden verarbeitet...", 
-                                      font=ctk.CTkFont(size=14))
-        progress_label.pack(pady=20)
-        
-        progress_bar = ctk.CTkProgressBar(progress_window)
-        progress_bar.pack(pady=10, padx=20, fill="x")
-        progress_bar.set(0.3)
-        
-        def mapping_thread():
-            try:
-                # Temel eşleştirme
-                extracted = self.bwa_parser.extract_values_for_period(
-                    self.selected_start_month, self.selected_end_month
-                )
-                
-                # Progress güncelle
-                self.after(0, lambda: progress_bar.set(0.6))
-                self.after(0, lambda: progress_label.configure(text="Claude AI Vorschläge werden abgerufen..."))
-                
-                # Claude API aktifse öneriler al
-                if self.bwa_parser.claude_api and self.bwa_parser.claude_api.is_available():
-                    unmapped = self.bwa_parser._find_unmapped_accounts()
-                    if unmapped:
-                        print(f"Found {len(unmapped)} unmapped accounts, getting AI suggestions...")
-                        ai_suggestions = self.bwa_parser._get_ai_suggestions(unmapped)
-                        if ai_suggestions:
-                            extracted['_ai_suggestions'] = ai_suggestions
-                            print(f"Got {len(ai_suggestions)} AI suggestions")
+            """DÜZELTİLMİŞ perform_mapping fonksiyonu"""
+            if self.bwa_parser.bwa_data is None or self.bwa_parser.bwa_data.empty:
+                return
+            
+            self.mapping_btn.configure(text=self.texts["processing"], state="disabled")
+            
+            # Progress göstergesi
+            progress_window = ctk.CTkToplevel(self)
+            progress_window.title("Verarbeitung...")
+            progress_window.geometry("300x100")
+            progress_window.transient(self)
+            progress_window.grab_set()
+            
+            # Progress window'u merkeze al
+            progress_window.update_idletasks()
+            x = (progress_window.winfo_screenwidth() // 2) - (150)
+            y = (progress_window.winfo_screenheight() // 2) - (50)
+            progress_window.geometry(f"300x100+{x}+{y}")
+            
+            progress_label = ctk.CTkLabel(progress_window, text="Daten werden verarbeitet...", 
+                                        font=ctk.CTkFont(size=14))
+            progress_label.pack(pady=20)
+            
+            progress_bar = ctk.CTkProgressBar(progress_window)
+            progress_bar.pack(pady=10, padx=20, fill="x")
+            progress_bar.set(0.3)
+            
+            def mapping_thread():
+                try:
+                    # Temel eşleştirme
+                    extracted = self.bwa_parser.extract_values_for_period(
+                        self.selected_start_month, self.selected_end_month
+                    )
+                    
+                    # Progress güncelle
+                    self.after(0, lambda: progress_bar.set(0.6))
+                    self.after(0, lambda: progress_label.configure(text="Claude AI Vorschläge werden abgerufen..."))
+                    
+                    # --- İYİLEŞTİRİLMİŞ BÖLÜM BAŞLANGICI ---
+                    # Claude API aktifse öneriler al
+                    if self.bwa_parser.claude_api and self.bwa_parser.claude_api.is_available():
+                        unmapped = self.bwa_parser._find_unmapped_accounts()
+                        if unmapped:
+                            print(f"Found {len(unmapped)} unmapped accounts, getting AI suggestions...")
+                            ai_suggestions = self.bwa_parser._get_ai_suggestions(unmapped)
+                            if ai_suggestions:
+                                extracted['_ai_suggestions'] = ai_suggestions
+                                print(f"Got {len(ai_suggestions)} AI suggestions")
+                            else:
+                                # AI'dan öneri gelmediyse (geçersiz anahtar vb.) durumu not et
+                                extracted['_ai_status'] = "AI önerileri alınamadı. API anahtarı geçersiz olabilir."
+                                print("No AI suggestions received (API key may be invalid)")
                         else:
-                            print("No AI suggestions received (API key may be invalid)")
-                else:
-                    print("Claude API not configured or not available")
-                
-                # Progress tamamlandı
-                self.after(0, lambda: progress_bar.set(1.0))
-                self.after(0, lambda: progress_window.destroy())
-                
-                # DÜZELTİLMİŞ: handle_mapping_complete kullan
-                self.after(0, lambda: self.handle_mapping_complete(extracted))
-                
-            except Exception as e:
-                print(f"Mapping error: {e}")
-                import traceback
-                traceback.print_exc()
-                self.after(0, lambda: progress_window.destroy())
-                self.after(0, lambda: messagebox.showerror("Fehler", f"Mapping fehlgeschlagen: {str(e)}"))
-                self.after(0, lambda: self.mapping_btn.configure(text=self.texts["auto_mapping"], state="normal"))
-        
-        threading.Thread(target=mapping_thread, daemon=True).start()
+                            # Eşleştirilecek yeni hesap bulunamadıysa durumu not et
+                            extracted['_ai_status'] = "Tüm hesaplar eşleştirilmiş görünüyor."
+                    else:
+                        # API hiç yapılandırılmadıysa durumu not et
+                        extracted['_ai_status'] = "Claude AI aktif değil. Ayarlardan API anahtarınızı girin."
+                        print("Claude API not configured or not available")
+                    # --- İYİLEŞTİRİLMİŞ BÖLÜM SONU ---
+                    
+                    # Progress tamamlandı
+                    self.after(0, lambda: progress_bar.set(1.0))
+                    self.after(0, lambda: progress_window.destroy())
+                    
+                    self.after(0, lambda: self.handle_mapping_complete(extracted))
+                    
+                except Exception as e:
+                    print(f"Mapping error: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    self.after(0, lambda: progress_window.destroy())
+                    self.after(0, lambda: messagebox.showerror("Fehler", f"Mapping fehlgeschlagen: {str(e)}"))
+                    self.after(0, lambda: self.mapping_btn.configure(text=self.texts["auto_mapping"], state="normal"))
+            
+            threading.Thread(target=mapping_thread, daemon=True).start()
     
     def handle_mapping_complete(self, extracted_data: Dict):
         """YENİ: Mapping tamamlandığında çağrılır"""
@@ -876,84 +903,95 @@ class EKSFormFiller(ctk.CTk):
 
 
     def display_mapping_results(self):
-        # Clear previous results
-        for widget in self.results_frame.winfo_children():
-            widget.destroy()
-        
-        if not self.extracted_data:
-            ctk.CTkLabel(self.results_frame, text="Keine Ergebnisse").pack(pady=20)
-            return
-        
-        total_confidence = 0
-        valid_mappings = 0
-        
-        for field, data in self.extracted_data.items():
-            if field.startswith('_'):  # Skip special fields
-                continue
-                
-            # Result Frame
-            result_frame = ctk.CTkFrame(self.results_frame, fg_color="#2b2b2b")
-            result_frame.pack(fill="x", pady=5, padx=10)
+            # Clear previous results
+            for widget in self.results_frame.winfo_children():
+                widget.destroy()
             
-            # Header mit Confidence
-            confidence = data.get('confidence', 0)
-            color = "#4CAF50" if confidence > 80 else "#FF9800" if confidence > 50 else "#F44336"
+            if not self.extracted_data:
+                ctk.CTkLabel(self.results_frame, text="Keine Ergebnisse").pack(pady=20)
+                return
             
-            header_frame = ctk.CTkFrame(result_frame, fg_color="transparent")
-            header_frame.pack(fill="x", padx=10, pady=5)
+            total_confidence = 0
+            valid_mappings = 0
             
-            field_label = ctk.CTkLabel(header_frame, text=f"{field}: {data['description']}", 
-                                     font=ctk.CTkFont(weight="bold"))
-            field_label.pack(side="left")
-            
-            confidence_label = ctk.CTkLabel(header_frame, text=f"{confidence}%", 
-                                          text_color=color, font=ctk.CTkFont(weight="bold"))
-            confidence_label.pack(side="right")
-            
-            # Source
-            source_label = ctk.CTkLabel(result_frame, text=f"Quelle: {data['source']}", 
-                                      font=ctk.CTkFont(size=12))
-            source_label.pack(anchor="w", padx=20, pady=2)
-            
-            # Monatswerte
-            values = data['values']
-            months = data.get('months', [])
-            
-            if months and values:
-                values_frame = ctk.CTkFrame(result_frame, fg_color="#3b3b3b")
-                values_frame.pack(fill="x", padx=20, pady=5)
-                
-                for month, value in zip(months, values):
-                    value_text = f"{value:,.0f} €" if value is not None else "N/A"
-                    month_frame = ctk.CTkFrame(values_frame, fg_color="transparent")
-                    month_frame.pack(side="left", padx=5, pady=5)
+            for field, data in self.extracted_data.items():
+                if field.startswith('_'):  # Skip special fields
+                    continue
                     
-                    ctk.CTkLabel(month_frame, text=month, font=ctk.CTkFont(size=10)).pack()
-                    ctk.CTkLabel(month_frame, text=value_text, font=ctk.CTkFont(size=12, weight="bold")).pack()
+                # Result Frame
+                result_frame = ctk.CTkFrame(self.results_frame, fg_color="#2b2b2b")
+                result_frame.pack(fill="x", pady=5, padx=10)
+                
+                # Header mit Confidence
+                confidence = data.get('confidence', 0)
+                color = "#4CAF50" if confidence > 80 else "#FF9800" if confidence > 50 else "#F44336"
+                
+                header_frame = ctk.CTkFrame(result_frame, fg_color="transparent")
+                header_frame.pack(fill="x", padx=10, pady=5)
+                
+                field_label = ctk.CTkLabel(header_frame, text=f"{field}: {data['description']}", 
+                                        font=ctk.CTkFont(weight="bold"))
+                field_label.pack(side="left")
+                
+                confidence_label = ctk.CTkLabel(header_frame, text=f"{confidence}%", 
+                                            text_color=color, font=ctk.CTkFont(weight="bold"))
+                confidence_label.pack(side="right")
+                
+                # Source
+                source_label = ctk.CTkLabel(result_frame, text=f"Quelle: {data['source']}", 
+                                        font=ctk.CTkFont(size=12))
+                source_label.pack(anchor="w", padx=20, pady=2)
+                
+                # Monatswerte
+                values = data['values']
+                months = data.get('months', [])
+                
+                if months and values:
+                    values_frame = ctk.CTkFrame(result_frame, fg_color="#3b3b3b")
+                    values_frame.pack(fill="x", padx=20, pady=5)
+                    
+                    for month, value in zip(months, values):
+                        value_text = f"{value:,.0f} €" if value is not None else "N/A"
+                        month_frame = ctk.CTkFrame(values_frame, fg_color="transparent")
+                        month_frame.pack(side="left", padx=5, pady=5)
+                        
+                        ctk.CTkLabel(month_frame, text=month, font=ctk.CTkFont(size=10)).pack()
+                        ctk.CTkLabel(month_frame, text=value_text, font=ctk.CTkFont(size=12, weight="bold")).pack()
+                
+                # Gesamt
+                total = data.get('total', 0)
+                total_label = ctk.CTkLabel(result_frame, text=f"Gesamt: {total:,.0f} €", 
+                                        font=ctk.CTkFont(size=14, weight="bold"))
+                total_label.pack(anchor="w", padx=20, pady=5)
+                
+                if confidence > 0:
+                    total_confidence += confidence
+                    valid_mappings += 1
             
-            # Gesamt
-            total = data.get('total', 0)
-            total_label = ctk.CTkLabel(result_frame, text=f"Gesamt: {total:,.0f} €", 
-                                     font=ctk.CTkFont(size=14, weight="bold"))
-            total_label.pack(anchor="w", padx=20, pady=5)
+            # Summary
+            if valid_mappings > 0:
+                avg_confidence = total_confidence / valid_mappings
+                summary_frame = ctk.CTkFrame(self.results_frame, fg_color="#2b2b2b")
+                summary_frame.pack(fill="x", pady=20, padx=10)
+                
+                summary_text = f"Durchschnittliche Zuordnung: {avg_confidence:.1f}% ({valid_mappings}/{len([k for k in self.extracted_data.keys() if not k.startswith('_')])} Felder)"
+                ctk.CTkLabel(summary_frame, text=summary_text, 
+                            font=ctk.CTkFont(size=16, weight="bold")).pack(pady=20)
             
-            if confidence > 0:
-                total_confidence += confidence
-                valid_mappings += 1
-        
-        # Summary
-        if valid_mappings > 0:
-            avg_confidence = total_confidence / valid_mappings
-            summary_frame = ctk.CTkFrame(self.results_frame, fg_color="#2b2b2b")
-            summary_frame.pack(fill="x", pady=20, padx=10)
-            
-            summary_text = f"Durchschnittliche Zuordnung: {avg_confidence:.1f}% ({valid_mappings}/{len([k for k in self.extracted_data.keys() if not k.startswith('_')])} Felder)"
-            ctk.CTkLabel(summary_frame, text=summary_text, 
-                        font=ctk.CTkFont(size=16, weight="bold")).pack(pady=20)
-        
-        # Claude AI Suggestions anzeigen
-        if '_ai_suggestions' in self.extracted_data:
-            self.display_ai_suggestions(self.extracted_data['_ai_suggestions'])
+            # --- İYİLEŞTİRİLMİŞ BÖLÜM BAŞLANGICI ---
+            # Claude AI Suggestions veya Durumunu göster
+            if '_ai_suggestions' in self.extracted_data and self.extracted_data['_ai_suggestions']:
+                self.display_ai_suggestions(self.extracted_data['_ai_suggestions'])
+            elif '_ai_status' in self.extracted_data:
+                # AI durumu için bir çerçeve oluştur
+                ai_status_frame = ctk.CTkFrame(self.results_frame, fg_color="#4a4a4a") # Nötr bir renk
+                ai_status_frame.pack(fill="x", pady=10, padx=10)
+                
+                status_text = f"🤖 AI Durumu: {self.extracted_data['_ai_status']}"
+                
+                ctk.CTkLabel(ai_status_frame, text=status_text, 
+                            font=ctk.CTkFont(size=12)).pack(pady=10, padx=10)
+            # --- İYİLEŞTİRİLMİŞ BÖLÜM SONU ---
     
     def display_ai_suggestions(self, suggestions: List[Dict]):
         """Claude AI önerilerini gösterir"""
