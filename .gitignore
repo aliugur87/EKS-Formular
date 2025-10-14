@@ -1,0 +1,27 @@
+
+
+# Python'un derleme ve önbellek dosyalarını yoksay
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Sanal ortam klasörlerini yoksay (yaygın isimler)
+venv/
+.venv/
+env/
+.env/
+
+# PyInstaller tarafından oluşturulan derleme dosyalarını ve uygulamayı yoksay
+# .exe dosyasını GitHub'a yüklemeyeceğiz, onu "Releases" bölümünden yayınlayacağız.
+build/
+dist/
+*.spec
+
+# Hassas bilgileri içeren ayar dosyasını yoksay
+# Bu dosya asla herkese açık bir depoya gönderilmemelidir!
+settings.json
+
+# İşletim sistemine özel dosyalar (İyi bir pratiktir)
+.DS_Store
+Thumbs.db
