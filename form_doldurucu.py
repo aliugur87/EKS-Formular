@@ -12,6 +12,7 @@ import requests
 import threading
 import re
 
+
 # Dil sistemi
 LANGUAGES = {
     "DE": {
@@ -44,7 +45,17 @@ LANGUAGES = {
         "processing": "Verarbeitung...",
         "q1": "Q1", "q2": "Q2", "q3": "Q3", "q4": "Q4",
         "half_year": "Halbjahr", "full_year": "Ganzes Jahr",
-        "language": "Sprache"
+        "language": "Sprache",
+        # --- YENİ EKLENEN ANAHTARLAR ---
+        "bwa_history_title": "Verlauf der BWA-Uploads",
+        "no_history": "Keine bisherigen Uploads",
+        "delete_record_title": "Eintrag löschen",
+        "confirm_delete_message": "Sind Sie sicher, dass Sie den Verlaufseintrag '{file_name}' dauerhaft löschen möchten?\n\nDieser Vorgang kann nicht rückgängig gemacht werden.",
+        "record_not_found_error": "Eintrag konnte nicht gefunden und gelöscht werden.",
+        "mapping_table_pos": "Pos.",
+        "mapping_table_desc": "Beschreibung",
+        "ai_status_message": "🤖 KI-Status: {status}",
+        "bwa_loaded_from_history": "Verlauf geladen: {file_name}"
     },
     "TR": {
         "app_title": "EKS Form Doldurucu Pro",
@@ -76,7 +87,17 @@ LANGUAGES = {
         "processing": "İşleniyor...",
         "q1": "Q1", "q2": "Q2", "q3": "Q3", "q4": "Q4",
         "half_year": "6 Ay", "full_year": "12 Ay",
-        "language": "Dil"
+        "language": "Dil",
+        # --- YENİ EKLENEN ANAHTARLAR ---
+        "bwa_history_title": "Geçmiş BWA Yüklemeleri",
+        "no_history": "Geçmiş yükleme yok",
+        "delete_record_title": "Kaydı Sil",
+        "confirm_delete_message": "'{file_name}' adlı geçmiş kaydını kalıcı olarak silmek istediğinizden emin misiniz?\n\nBu işlem geri alınamaz.",
+        "record_not_found_error": "Kayıt bulunamadı ve silinemedi.",
+        "mapping_table_pos": "Poz.",
+        "mapping_table_desc": "Açıklama",
+        "ai_status_message": "🤖 AI Durumu: {status}",
+        "bwa_loaded_from_history": "Geçmişten yüklendi: {file_name}"
     }
 }
 
@@ -688,9 +709,9 @@ class EKSFormFiller(ctk.CTk):
                 
         
         # --- YENİ ARAYÜZ BÖLÜMÜ BAŞLANGICI ---
-        history_label = ctk.CTkLabel(left_panel, text="Geçmiş BWA Yüklemeleri", 
-                                     font=ctk.CTkFont(size=14, weight="bold"))
-        history_label.pack(pady=(20, 5), padx=20)
+        self.history_label = ctk.CTkLabel(left_panel, text=self.texts["bwa_history_title"], 
+                                          font=ctk.CTkFont(size=14, weight="bold"))
+        self.history_label.pack(pady=(20, 5), padx=20)
         
         self.bwa_history_frame = ctk.CTkScrollableFrame(left_panel, fg_color="#3b3b3b")
         self.bwa_history_frame.pack(fill="both", expand=True, padx=20, pady=(0, 20))
@@ -732,22 +753,36 @@ class EKSFormFiller(ctk.CTk):
         self.refresh_ui()
     
     def refresh_ui(self):
-        """UI metinlerini güncelle"""
-        self.title(self.texts["app_title"])
-        
-        try:
+            """Dil değiştiğinde TÜM UI metinlerini günceller."""
+            self.title(self.texts["app_title"])
+            
+            # Header ve Ana Butonlar
+            # (Bu kısım zaten çalışıyor, ancak daha fazla eleman varsa buraya eklenebilir)
             self.load_bwa_btn.configure(text=self.texts["load_bwa"])
             self.mapping_btn.configure(text=self.texts["auto_mapping"])
             self.export_btn.configure(text=self.texts["export_eks"])
             
-            if hasattr(self, 'bwa_status_label'):
-                current_text = self.bwa_status_label.cget("text")
-                if "Keine Datei" in current_text or "Dosya yok" in current_text:
-                    self.bwa_status_label.configure(text=self.texts["no_file"])
-                elif "geladen" in current_text or "yüklendi" in current_text:
-                    self.bwa_status_label.configure(text="✅ " + self.texts["file_loaded"])
-        except Exception as e:
-            print(f"UI refresh error: {e}")
+            # Sol Panel Başlıkları
+            if hasattr(self, 'history_label'):
+                self.history_label.configure(text=self.texts["bwa_history_title"])
+            
+            # Sağ Panel Başlığı
+            # Bu başlığı yeniden çizmek daha kolay. Önce bir referans oluşturalım.
+            # setup_ui içinde ilgili satırı `self.mapping_results_label = ctk.CTkLabel(...)` yapın.
+            if hasattr(self, 'mapping_results_label'):
+                self.mapping_results_label.configure(text=self.texts["mapping_results"])
+
+            # Dinamik İçerikleri Yeniden Çiz
+            # Bu, dil değişiminin her yerde görünür olmasını sağlar.
+            self.display_bwa_history()
+            self.display_mapping_results()
+            
+            # Durum Etiketleri
+            current_text = self.bwa_status_label.cget("text")
+            if "Keine Datei" in current_text or "Dosya yok" in current_text:
+                self.bwa_status_label.configure(text=self.texts["no_file"])
+            elif "geladen" in current_text or "yüklendi" in current_text or "loaded" in current_text:
+                self.bwa_status_label.configure(text="✅ " + self.texts["file_loaded"])
     
     def load_customer_list(self):
         customers = self.customer_manager.get_all_customers()
@@ -882,7 +917,7 @@ class EKSFormFiller(ctk.CTk):
                     delete_btn.pack(side="right", padx=5, pady=2)
 
             else:
-                ctk.CTkLabel(self.bwa_history_frame, text="Geçmiş yükleme yok.").pack(pady=10)
+                ctk.CTkLabel(self.bwa_history_frame, text=self.texts["no_history"]).pack(pady=10)
 
     def load_bwa_from_history(self, history_entry: Dict):
         """Geçmiş kayıttan bir BWA verisini yükler."""
@@ -898,7 +933,7 @@ class EKSFormFiller(ctk.CTk):
         if success:
             # Artık bir dosya yoluna bağlı değiliz
             self.bwa_file_path = None 
-            self.bwa_status_label.configure(text=f"✅ Verlauf geladen: {history_entry['file_name']}", text_color="green")
+            self.bwa_status_label.configure(text=f'✅ {self.texts["bwa_loaded_from_history"].format(file_name=history_entry["file_name"])}', text_color="green")
             self.mapping_btn.configure(state="normal")
             self.update_bwa_info()
         else:
@@ -906,32 +941,27 @@ class EKSFormFiller(ctk.CTk):
             self.mapping_btn.configure(state="disabled")
 
     def delete_bwa_history_entry(self, entry_to_delete: Dict):
-        """Seçilen bir geçmiş BWA kaydını kullanıcı onayıyla siler."""
-        if not self.current_customer:
-            return
+            """Seçilen bir geçmiş BWA kaydını kullanıcı onayıyla siler."""
+            if not self.current_customer:
+                return
 
-        file_name = entry_to_delete.get('file_name', 'Bilinmeyen Kayıt')
-        
-        # Kullanıcıdan onay al
-        confirm = messagebox.askyesno(
-            "Kaydı Sil",
-            f"'{file_name}' adlı geçmiş kaydını kalıcı olarak silmek istediğinizden emin misiniz?\n\nBu işlem geri alınamaz.",
-            icon='warning'
-        )
+            file_name = entry_to_delete.get('file_name', 'Bilinmeyen Kayıt')
+            
+            # Kullanıcıdan onay al (Dinamik metinlerle)
+            confirm_message = self.texts["confirm_delete_message"].format(file_name=file_name)
+            confirm = messagebox.askyesno(
+                self.texts["delete_record_title"],
+                confirm_message,
+                icon='warning'
+            )
 
-        if confirm:
-            try:
-                # Girişi listeden kaldır
-                self.current_customer.bwa_upload_history.remove(entry_to_delete)
-                
-                # Müşteri verisini güncelle ve kaydet
-                self.customer_manager.save_customer(self.current_customer)
-                
-                # Arayüzü yenile
-                self.display_bwa_history()
-                
-            except ValueError:
-                messagebox.showerror("Hata", "Kayıt bulunamadı ve silinemedi.")
+            if confirm:
+                try:
+                    self.current_customer.bwa_upload_history.remove(entry_to_delete)
+                    self.customer_manager.save_customer(self.current_customer)
+                    self.display_bwa_history()
+                except ValueError:
+                    messagebox.showerror(self.texts["error"], self.texts["record_not_found_error"])
     
     def update_bwa_info(self):
         for widget in self.bwa_info_frame.winfo_children():
@@ -1070,15 +1100,15 @@ class EKSFormFiller(ctk.CTk):
                 self.results_frame.grid_columnconfigure(i + 2, weight=2, minsize=100) # Aylık Sütunlar
             self.results_frame.grid_columnconfigure(num_month_cols + 2, weight=3, minsize=120) # Gesamt
 
-            # === Başlık Satırı (Grid ile mükemmel hizalama) ===
+        # === Başlık Satırı (Grid ile mükemmel hizalama) ===
             header_font = ctk.CTkFont(size=12, weight="bold")
             header_fg_color = "#333333"
             
-            ctk.CTkLabel(self.results_frame, text="Pos.", font=header_font, fg_color=header_fg_color, corner_radius=0, anchor="w").grid(row=0, column=0, sticky="ew", padx=(0,1), pady=(0,1))
-            ctk.CTkLabel(self.results_frame, text="Beschreibung", font=header_font, fg_color=header_fg_color, corner_radius=0, anchor="w").grid(row=0, column=1, sticky="ew", padx=(0,1), pady=(0,1))
+            ctk.CTkLabel(self.results_frame, text=self.texts["mapping_table_pos"], font=header_font, fg_color=header_fg_color, corner_radius=0, anchor="w").grid(row=0, column=0, sticky="ew", padx=(0,1), pady=(0,1))
+            ctk.CTkLabel(self.results_frame, text=self.texts["mapping_table_desc"], font=header_font, fg_color=header_fg_color, corner_radius=0, anchor="w").grid(row=0, column=1, sticky="ew", padx=(0,1), pady=(0,1))
             for i, month in enumerate(months):
                 ctk.CTkLabel(self.results_frame, text=month, font=header_font, fg_color=header_fg_color, corner_radius=0).grid(row=0, column=i + 2, sticky="ew", padx=(0,1), pady=(0,1))
-            ctk.CTkLabel(self.results_frame, text="Gesamt", font=header_font, fg_color=header_fg_color, corner_radius=0).grid(row=0, column=num_month_cols + 2, sticky="ew", padx=(0,1), pady=(0,1))
+            ctk.CTkLabel(self.results_frame, text=self.texts["total"], font=header_font, fg_color=header_fg_color, corner_radius=0).grid(row=0, column=num_month_cols + 2, sticky="ew", padx=(0,1), pady=(0,1))
 
             # === Veri Satırları ===
             row_index = 1
@@ -1114,7 +1144,7 @@ class EKSFormFiller(ctk.CTk):
             elif '_ai_status' in self.extracted_data:
                 ai_status_frame = ctk.CTkFrame(self.results_frame, fg_color="#4a4a4a")
                 ai_status_frame.grid(row=row_index, column=0, columnspan=num_month_cols + 3, sticky="ew", pady=20, padx=10)
-                status_text = f"🤖 AI Durumu: {self.extracted_data['_ai_status']}"
+                status_text = self.texts["ai_status_message"].format(status=self.extracted_data['_ai_status']) # Dinamik metin
                 ctk.CTkLabel(ai_status_frame, text=status_text, font=ctk.CTkFont(size=12)).pack(pady=10, padx=10)
     
     def display_ai_suggestions(self, suggestions: List[Dict]):
