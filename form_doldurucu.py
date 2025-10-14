@@ -842,35 +842,47 @@ class EKSFormFiller(ctk.CTk):
 
 
     def display_bwa_history(self):
-        """Müşterinin geçmiş BWA yüklemelerini arayüzde gösterir."""
-        for widget in self.bwa_history_frame.winfo_children():
-            widget.destroy()
+            """Müşterinin geçmiş BWA yüklemelerini ve silme butonlarını arayüzde gösterir."""
+            for widget in self.bwa_history_frame.winfo_children():
+                widget.destroy()
 
-        if self.current_customer and self.current_customer.bwa_upload_history:
-            # Geçmişi tarihe göre ters sırala (en yeni en üstte)
-            sorted_history = sorted(self.current_customer.bwa_upload_history, key=lambda x: x['date'], reverse=True)
-            
-            for entry in sorted_history[:10]: # Son 10 kaydı göster
-                date_str = entry['date']
-                file_name = entry['file_name']
+            if self.current_customer and self.current_customer.bwa_upload_history:
+                # Geçmişi tarihe göre ters sırala (en yeni en üstte)
+                sorted_history = sorted(self.current_customer.bwa_upload_history, key=lambda x: x['date'], reverse=True)
                 
-                entry_frame = ctk.CTkFrame(self.bwa_history_frame, fg_color="transparent")
-                entry_frame.pack(fill="x", pady=2)
-                
-                btn_text = f"💾 {date_str} - {file_name}"
-                
-                btn = ctk.CTkButton(
-                    entry_frame,
-                    text=btn_text,
-                    anchor="w",
-                    fg_color="#4a4a4a",
-                    hover_color="#555555",
-                    # Lambda kullanarak doğru geçmiş girdisini fonksiyona gönder
-                    command=lambda e=entry: self.load_bwa_from_history(e)
-                )
-                btn.pack(fill="x")
-        else:
-            ctk.CTkLabel(self.bwa_history_frame, text="Geçmiş yükleme yok.").pack(pady=10)
+                for entry in sorted_history[:10]: # Son 10 kaydı göster
+                    
+                    # Her kayıt için bir ana çerçeve oluştur
+                    entry_frame = ctk.CTkFrame(self.bwa_history_frame, fg_color="#3b3b3b")
+                    entry_frame.pack(fill="x", pady=2)
+
+                    # Yükleme butonu (çerçevenin çoğunu kaplar)
+                    btn_text = f"💾 {entry['date']} - {entry['file_name']}"
+                    load_btn = ctk.CTkButton(
+                        entry_frame,
+                        text=btn_text,
+                        anchor="w",
+                        fg_color="transparent",
+                        hover_color="#4a4a4a",
+                        command=lambda e=entry: self.load_bwa_from_history(e)
+                    )
+                    load_btn.pack(side="left", fill="x", expand=True, padx=(5,0), pady=2)
+
+                    # Silme butonu (sağda, küçük ve kırmızı)
+                    delete_btn = ctk.CTkButton(
+                        entry_frame,
+                        text="❌",
+                        width=30,
+                        height=30,
+                        fg_color="#c13e3e",
+                        hover_color="#e05252",
+                        font=ctk.CTkFont(size=14),
+                        command=lambda e=entry: self.delete_bwa_history_entry(e)
+                    )
+                    delete_btn.pack(side="right", padx=5, pady=2)
+
+            else:
+                ctk.CTkLabel(self.bwa_history_frame, text="Geçmiş yükleme yok.").pack(pady=10)
 
     def load_bwa_from_history(self, history_entry: Dict):
         """Geçmiş kayıttan bir BWA verisini yükler."""
@@ -892,6 +904,34 @@ class EKSFormFiller(ctk.CTk):
         else:
             self.bwa_status_label.configure(text="❌ " + message, text_color="red")
             self.mapping_btn.configure(state="disabled")
+
+    def delete_bwa_history_entry(self, entry_to_delete: Dict):
+        """Seçilen bir geçmiş BWA kaydını kullanıcı onayıyla siler."""
+        if not self.current_customer:
+            return
+
+        file_name = entry_to_delete.get('file_name', 'Bilinmeyen Kayıt')
+        
+        # Kullanıcıdan onay al
+        confirm = messagebox.askyesno(
+            "Kaydı Sil",
+            f"'{file_name}' adlı geçmiş kaydını kalıcı olarak silmek istediğinizden emin misiniz?\n\nBu işlem geri alınamaz.",
+            icon='warning'
+        )
+
+        if confirm:
+            try:
+                # Girişi listeden kaldır
+                self.current_customer.bwa_upload_history.remove(entry_to_delete)
+                
+                # Müşteri verisini güncelle ve kaydet
+                self.customer_manager.save_customer(self.current_customer)
+                
+                # Arayüzü yenile
+                self.display_bwa_history()
+                
+            except ValueError:
+                messagebox.showerror("Hata", "Kayıt bulunamadı ve silinemedi.")
     
     def update_bwa_info(self):
         for widget in self.bwa_info_frame.winfo_children():
