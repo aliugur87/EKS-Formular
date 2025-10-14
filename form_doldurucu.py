@@ -13,6 +13,9 @@ import threading
 import re
 
 
+APP_VERSION = "v1.0.0"
+
+
 # Dil sistemi
 LANGUAGES = {
     "DE": {
