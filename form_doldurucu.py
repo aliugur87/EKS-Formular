@@ -11,10 +11,21 @@ from openpyxl.styles import Font, PatternFill, Alignment
 import requests
 import threading
 import re
+import sys
 
 
 APP_VERSION = "v1.0.0"
 
+
+def resource_path(relative_path):
+    """ Geliştirme ve PyInstaller için kaynaklara mutlak yol alır """
+    try:
+        # PyInstaller geçici bir klasör oluşturur ve yolu _MEIPASS içinde saklar
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
 
 # Dil sistemi
 LANGUAGES = {
@@ -525,7 +536,7 @@ class EKSFormFiller(ctk.CTk):
         
         # Grundkonfiguration
         self.title("EKS Formular Ausfüller Pro")
-        self.iconbitmap("icon.ico")
+        self.iconbitmap(resource_path("icon.ico"))
         self.geometry("1400x900")
         self.configure(fg_color="#1a1a1a")
         
