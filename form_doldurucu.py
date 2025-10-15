@@ -12,7 +12,9 @@ import requests
 import threading
 import re
 import sys
-
+import tempfile
+import base64
+import template_data # Az önce oluşturduğumuz dosyayı import ediyoruz
 
 APP_VERSION = "v1.0.0"
 
@@ -1357,27 +1359,66 @@ Konsol çıktısını kontrol edin."""
             messagebox.showerror("Fehler" if self.language == "DE" else "Hata", error_msg)
     
     def create_eks_export(self, export_path: str) -> bool:
-        try:
-            template_path = os.path.join("templates", "eks_form.xlsx")
-            if not os.path.exists(template_path):
-                return self.create_automatic_export(export_path)
-            
-            wb = openpyxl.load_workbook(template_path)
-            ws = wb.active
-            
-            success = self.fill_eks_template(ws)
-            if not success:
+            """
+            Elde edilen verileri kullanarak EKS Excel dosyasını oluşturur.
+            Bu versiyon, Excel şablonunu doğrudan kodun içine gömülü veriden alır.
+            """
+            try:
+                # --- YENİ VE GARANTİLİ YÖNTEM BAŞLANGICI ---
+
+                # Adım 1: Koda gömülü metin verisini al ve çöz.
+                # 'template_data.py' dosyasındaki 'b64_data' değişkenini kullanıyoruz.
+                # base64.b64decode, bu uzun metni tekrar orijinal Excel dosyasının
+                # ikili (binary) verisine dönüştürür.
+                template_content = base64.b64decode(template_data.b64_data)
+
+                # Adım 2: Güvenli, geçici bir Excel dosyası oluştur.
+                # openpyxl kütüphanesi bir dosya yoluyla çalışmak zorundadır,
+                # bu yüzden çözdüğümüz bu ikili veriyi geçici bir dosyaya yazıyoruz.
+                # 'delete=False' önemlidir, çünkü bu, dosyayı biz silene kadar tutar.
+                # 'suffix='.xlsx'' ise dosyanın uzantısının doğru olmasını sağlar.
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as temp_file:
+                    temp_file.write(template_content)
+                    # Geçici dosyanın tam yolunu bir değişkene atıyoruz.
+                    # Örn: C:\Users\Kullanıcı\AppData\Local\Temp\tmp123abc.xlsx
+                    template_path = temp_file.name
+                
+                # --- YÖNTEM SONU ---
+
+                # Adım 3: Geçici şablon dosyasını openpyxl ile aç.
+                # Kodun geri kalanı için her şey eskisi gibi. openpyxl, bunun geçici
+                # bir dosya olduğunu bilmez, normal bir Excel dosyası gibi davranır.
+                wb = openpyxl.load_workbook(template_path)
+                ws = wb.active
+                
+                # Adım 4: Formu doldurma işlemlerini çağır.
+                # Bu fonksiyonlar değişmedi, aynı şekilde çalışmaya devam ediyorlar.
+                success = self.fill_eks_template(ws)
+                if not success:
+                    os.remove(template_path) # Hata olursa bile geçici dosyayı sil
+                    return False
+                
+                self.update_customer_info_in_template(ws)
+                self.update_period_info_in_template(ws)
+                
+                # Adım 5: Doldurulmuş son halini kullanıcının istediği yere kaydet.
+                wb.save(export_path)
+                
+                # Adım 6: Temizlik.
+                # Artık işimiz bittiğine göre, oluşturduğumuz geçici dosyayı
+                # sistemden kalıcı olarak siliyoruz. Bu, gereksiz dosya birikimini önler.
+                os.remove(template_path)
+                
+                # Her şey başarılı olduysa True döndür.
+                return True
+                
+            except Exception as e:
+                # Herhangi bir hata olursa konsola yazdır ve False döndür.
+                print(f"Template Export Hatası: {e}")
+                # Eğer hata sırasında geçici dosya hala varsa, onu silmeye çalış.
+                if 'template_path' in locals() and os.path.exists(template_path):
+                    os.remove(template_path)
                 return False
-            
-            self.update_customer_info_in_template(ws)
-            self.update_period_info_in_template(ws)
-            
-            wb.save(export_path)
-            return True
-            
-        except Exception as e:
-            print(f"Template Export Fehler: {e}")
-            return False
     
     def fill_eks_template(self, ws) -> bool:
         """EKS template'indeki hücreleri doldurur"""
