@@ -260,39 +260,198 @@ class BWAParser:
     
     def load_bwa_file(self, file_path: str) -> Tuple[bool, str]:
         try:
-            # BWA laden mit header=None für rohe Daten
-            df = pd.read_excel(file_path, header=None)
+            # .xls ve .xlsx formatlarını destekle
+            file_ext = os.path.splitext(file_path)[1].lower()
             
-            # Kunde info aus erster Zeile extrahieren
-            first_row = str(df.iloc[0, 0]) if not df.empty else ""
-            if first_row and len(first_row) > 6:
-                parts = first_row.split(" ", 1)
-                if len(parts) >= 2 and parts[0].isdigit():
-                    self.customer_info = {
-                        "code": parts[0],
-                        "name": parts[1]
-                    }
+            if file_ext == '.xls':
+                # Eski Excel formatı için xlrd kullan
+                import xlrd
+                workbook = xlrd.open_workbook(file_path)
+                sheet = workbook.sheet_by_index(0)
+                
+                # xlrd verisini pandas DataFrame'e dönüştür
+                data = []
+                for row_idx in range(sheet.nrows):
+                    data.append([sheet.cell_value(row_idx, col_idx) for col_idx in range(sheet.ncols)])
+                df = pd.DataFrame(data)
+            else:
+                # Modern Excel formatı (.xlsx) - pandas ile direkt oku
+                df = pd.read_excel(file_path, header=None, engine='openpyxl')
             
-            # Header finden
+            print(f"\n{'='*60}")
+            print(f"Excel loaded: {os.path.basename(file_path)}")
+            print(f"Shape: {df.shape}")
+            print(f"First 5 rows:")
+            for i in range(min(5, len(df))):
+                print(f"Row {i}: {df.iloc[i, 0]} | {df.iloc[i, 1] if df.shape[1] > 1 else ''}")
+            print(f"{'='*60}\n")
+            
+            # Müşteri bilgisini bul - GELİŞTİRİLMİŞ
+            customer_found = False
+            for row_idx in range(min(10, len(df))):
+                # Tüm sütunları kontrol et
+                for col_idx in range(min(5, df.shape[1])):
+                    try:
+                        cell_value = df.iloc[row_idx, col_idx]
+                        if pd.isna(cell_value):
+                            continue
+                        
+                        cell_str = str(cell_value).strip()
+                        
+                        if len(cell_str) > 6:
+                            # Boşlukla ayrılmış format: "111051 Sherzad Farman Jindi"
+                            parts = cell_str.split(None, 1)
+                            if len(parts) >= 2 and parts[0].isdigit() and len(parts[0]) >= 4:
+                                self.customer_info = {
+                                    "code": parts[0],
+                                    "name": parts[1]
+                                }
+                                customer_found = True
+                                print(f"Customer found at row {row_idx}, col {col_idx}: {self.customer_info}")
+                                break
+                            
+                            # Köşeli parantez format: "[1105] Sherzad Farman Jindi"
+                            if cell_str.startswith('[') and ']' in cell_str:
+                                bracket_end = cell_str.index(']')
+                                code_part = cell_str[1:bracket_end]
+                                name_part = cell_str[bracket_end+1:].strip()
+                                if code_part.isdigit() and name_part:
+                                    self.customer_info = {
+                                        "code": code_part,
+                                        "name": name_part
+                                    }
+                                    customer_found = True
+                                    print(f"Customer found (bracket) at row {row_idx}, col {col_idx}: {self.customer_info}")
+                                    break
+                    except Exception as e:
+                        print(f"Error checking cell [{row_idx}, {col_idx}]: {e}")
+                        continue
+                
+                if customer_found:
+                    break
+            
+            if not customer_found:
+                print("Warning: Customer info not detected")
+            
+            # Header satırını bul
             header_row = -1
-            for i, row in df.iterrows():
-                if any("Konto" in str(cell) and "Bezeichnung" in str(cell) for cell in row if pd.notna(cell)):
-                    header_row = i
+            konto_col = -1
+            bezeichnung_col = -1
+            
+            for row_idx in range(min(15, len(df))):
+                row = df.iloc[row_idx]
+                
+                has_konto = False
+                has_months = False
+                
+                for col_idx in range(len(row)):
+                    try:
+                        cell = row.iloc[col_idx]
+                        if pd.isna(cell):
+                            continue
+                        
+                        cell_str = str(cell).upper().strip()
+                        
+                        # "Konto" sütununu bul
+                        if 'KONTO' in cell_str and konto_col == -1:
+                            konto_col = col_idx
+                            has_konto = True
+                        
+                        # "Bezeichnung" sütununu bul
+                        if ('BEZEICHNUNG' in cell_str or 'DESCRIPTION' in cell_str) and bezeichnung_col == -1:
+                            bezeichnung_col = col_idx
+                        
+                        # Ay kontrolü
+                        if cell_str in ['JAN', 'FEB', 'MRZ', 'APR', 'MAI', 'JUN', 'JUL', 'AUG', 'SEP', 'OKT', 'NOV', 'DEZ']:
+                            has_months = True
+                    
+                    except Exception as e:
+                        continue
+                
+                if has_konto and has_months:
+                    header_row = row_idx
+                    print(f"Header found at row {header_row}")
+                    print(f"  Konto col: {konto_col}, Bezeichnung col: {bezeichnung_col}")
                     break
             
             if header_row == -1:
                 return False, "BWA Header nicht gefunden"
             
-            # Daten ab header_row neu laden
-            self.bwa_data = pd.read_excel(file_path, header=header_row)
+            # Veri satırlarını al
+            data_start_row = header_row + 1
+            self.bwa_data = df.iloc[data_start_row:].reset_index(drop=True)
             
-            # Verfügbare Monate extrahieren
+            # Yeni DataFrame oluştur
+            new_df = pd.DataFrame()
+            
+            # Konto ve Bezeichnung'u birleştir
+            combined = []
+            for idx in range(len(self.bwa_data)):
+                try:
+                    if konto_col >= 0 and bezeichnung_col >= 0 and konto_col != bezeichnung_col:
+                        # FORMAT 2: Ayrı sütunlar
+                        konto_val = self.bwa_data.iloc[idx, konto_col]
+                        bez_val = self.bwa_data.iloc[idx, bezeichnung_col]
+                        
+                        konto_str = str(konto_val).strip() if pd.notna(konto_val) else ""
+                        bez_str = str(bez_val).strip() if pd.notna(bez_val) else ""
+                        
+                        if konto_str == 'nan':
+                            konto_str = ""
+                        if bez_str == 'nan':
+                            bez_str = ""
+                        
+                        combined_text = f"{konto_str} {bez_str}".strip()
+                        combined.append(combined_text)
+                    
+                    elif konto_col >= 0:
+                        # FORMAT 1: Tek sütun
+                        val = self.bwa_data.iloc[idx, konto_col]
+                        val_str = str(val).strip() if pd.notna(val) else ""
+                        if val_str == 'nan':
+                            val_str = ""
+                        combined.append(val_str)
+                    else:
+                        combined.append("")
+                
+                except Exception as e:
+                    print(f"Error at row {idx}: {e}")
+                    combined.append("")
+            
+            new_df['Konto_Bezeichnung'] = combined
+            
+            # Ay sütunlarını ekle
             month_cols = ['JAN', 'FEB', 'MRZ', 'APR', 'MAI', 'JUN', 'JUL', 'AUG', 'SEP', 'OKT', 'NOV', 'DEZ']
-            self.available_months = [col for col in self.bwa_data.columns if col in month_cols]
+            header_row_data = df.iloc[header_row]
+            
+            months_found = []
+            for month in month_cols:
+                for col_idx in range(len(header_row_data)):
+                    try:
+                        cell = header_row_data.iloc[col_idx]
+                        if pd.notna(cell) and str(cell).upper().strip() == month:
+                            new_df[month] = self.bwa_data.iloc[:, col_idx].values
+                            months_found.append(month)
+                            break
+                    except Exception as e:
+                        continue
+            
+            self.bwa_data = new_df
+            self.available_months = months_found
+            
+            print(f"Available months: {self.available_months}")
+            print(f"Final shape: {self.bwa_data.shape}")
+            print(f"First 5 data rows:\n{self.bwa_data.head()}\n")
+            
+            if not self.available_months:
+                return False, "Keine Monatsspalten gefunden"
             
             return True, f"BWA geladen: {len(self.available_months)} Monate verfügbar"
             
         except Exception as e:
+            import traceback
+            print("\nFULL ERROR:")
+            traceback.print_exc()
             return False, f"Fehler beim Laden: {str(e)}"
     
     def extract_values_for_period(self, start_month: str, end_month: str) -> Dict:
@@ -337,8 +496,14 @@ class BWAParser:
     
     def _find_direct_match(self, search_term: str, months: List[str]) -> Dict:
         try:
-            first_col = self.bwa_data.iloc[:, 0].astype(str)
-            mask = first_col.str.contains(search_term, case=False, na=False)
+            # İlk sütunu al (artık her zaman Konto+Bezeichnung kombinasyonu)
+            if 'Konto_Bezeichnung' in self.bwa_data.columns:
+                first_col = self.bwa_data['Konto_Bezeichnung'].astype(str)
+            else:
+                first_col = self.bwa_data.iloc[:, 0].astype(str)
+            
+            # Arama yap
+            mask = first_col.str.contains(search_term, case=False, na=False, regex=False)
             
             if mask.any():
                 row = self.bwa_data[mask].iloc[0]
@@ -350,8 +515,8 @@ class BWAParser:
                     else:
                         values.append(None)
                 return {'values': values}
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Error in _find_direct_match for '{search_term}': {e}")
         
         return {'values': [None] * len(months)}
     
@@ -812,18 +977,32 @@ class EKSFormFiller(ctk.CTk):
     def load_customer_list(self):
         customers = self.customer_manager.get_all_customers()
         customer_options = [f"{c.code} - {c.name}" for c in customers]
+        
         if customer_options:
             self.customer_combo.configure(values=customer_options)
             self.customer_combo.set(customer_options[0])
+            # İlk müşteriyi otomatik seç
             self.on_customer_selected(customer_options[0])
+            print(f"Loaded {len(customer_options)} customers")
         else:
             self.customer_combo.configure(values=["Keine Kunden"])
+            self.current_customer = None
+            print("No customers found")
     
     def on_customer_selected(self, selection):
-            if " - " in selection:
-                customer_code = selection.split(" - ")[0]
-                self.current_customer = self.customer_manager.load_customer(customer_code)
-                self.display_bwa_history() # --- BU SATIRI EKLE ---
+        if selection and " - " in selection:
+            customer_code = selection.split(" - ")[0]
+            self.current_customer = self.customer_manager.load_customer(customer_code)
+            
+            if self.current_customer:
+                print(f"Customer selected: {self.current_customer.code} - {self.current_customer.name}")
+                self.display_bwa_history()
+            else:
+                print(f"Failed to load customer: {customer_code}")
+                self.current_customer = None
+        else:
+            self.current_customer = None
+            print("No valid customer selection")
     
     def create_new_customer(self):
         dialog = CustomerDialog(self, self.texts)
@@ -842,7 +1021,12 @@ class EKSFormFiller(ctk.CTk):
     def load_bwa_file(self):
         file_path = filedialog.askopenfilename(
             title="BWA Excel Datei auswählen",
-            filetypes=[("Excel files", "*.xlsx *.xls")]
+            filetypes=[
+                ("Excel files", "*.xlsx *.xls"),
+                ("Excel 2007+", "*.xlsx"),
+                ("Excel 97-2003", "*.xls"),
+                ("All files", "*.*")
+            ]
         )
         
         if file_path:
@@ -1097,10 +1281,20 @@ class EKSFormFiller(ctk.CTk):
             threading.Thread(target=mapping_thread, daemon=True).start()
     
     def handle_mapping_complete(self, extracted_data: Dict):
-        """YENİ: Mapping tamamlandığında çağrılır"""
+        """Mapping tamamlandığında çağrılır"""
         self.extracted_data = extracted_data
         self.mapping_btn.configure(text=self.texts["auto_mapping"], state="normal")
-        self.export_btn.configure(state="normal")
+        
+        # Sadece gerçek veri varsa export butonunu aktifleştir
+        has_real_data = any(not key.startswith('_') for key in extracted_data.keys())
+        
+        if has_real_data:
+            self.export_btn.configure(state="normal")
+            print("Export button enabled - data available")
+        else:
+            self.export_btn.configure(state="disabled")
+            print("Export button disabled - no valid data")
+        
         self.display_mapping_results()
 
 
@@ -1327,8 +1521,22 @@ Konsol çıktısını kontrol edin."""
             return None
     
     def export_eks(self):
-        if not self.extracted_data or not self.current_customer:
-            warning_msg = "Keine Daten zum Exportieren oder kein Kunde ausgewählt" if self.language == "DE" else "Dışa aktarılacak veri yok veya müşteri seçilmedi"
+        # 1. Müşteri kontrolü
+        if not self.current_customer:
+            warning_msg = "Kein Kunde ausgewählt. Bitte wählen Sie zuerst einen Kunden aus!" if self.language == "DE" else "Müşteri seçilmedi. Lütfen önce bir müşteri seçin!"
+            messagebox.showwarning("Warnung" if self.language == "DE" else "Uyarı", warning_msg)
+            return
+        
+        # 2. Veri kontrolü
+        if not self.extracted_data:
+            warning_msg = "Keine Daten zum Exportieren. Bitte zuerst 'Automatische Zuordnung' ausführen!" if self.language == "DE" else "Dışa aktarılacak veri yok. Lütfen önce 'Otomatik Eşleştirme' yapın!"
+            messagebox.showwarning("Warnung" if self.language == "DE" else "Uyarı", warning_msg)
+            return
+        
+        # 3. Gerçek veri var mı kontrol et
+        has_real_data = any(not key.startswith('_') for key in self.extracted_data.keys())
+        if not has_real_data:
+            warning_msg = "Keine gültigen Daten zum Exportieren gefunden!" if self.language == "DE" else "Geçerli veri bulunamadı!"
             messagebox.showwarning("Warnung" if self.language == "DE" else "Uyarı", warning_msg)
             return
         
@@ -1336,7 +1544,10 @@ Konsol çıktısını kontrol edin."""
         os.makedirs(template_dir, exist_ok=True)
         
         try:
+            # Dosya adı oluştur
             filename = f"{self.current_customer.code}_EKS_{self.selected_start_month}-{self.selected_end_month}_{self.selected_year}_{datetime.now().strftime('%Y%m%d')}.xlsx"
+            
+            # Kayıt yeri seç
             export_path = filedialog.asksaveasfilename(
                 title="EKS Export speichern" if self.language == "DE" else "EKS Dışa Aktar",
                 defaultextension=".xlsx",
@@ -1344,17 +1555,24 @@ Konsol çıktısını kontrol edin."""
                 initialfile=filename
             )
             
-            if export_path:
-                success = self.create_eks_export(export_path)
-                if success:
-                    success_msg = f"EKS erfolgreich exportiert:\n{export_path}" if self.language == "DE" else f"EKS başarıyla dışa aktarıldı:\n{export_path}"
-                    messagebox.showinfo("Erfolg" if self.language == "DE" else "Başarılı", success_msg)
-                    self.update_customer_history()
-                else:
-                    error_msg = "Export fehlgeschlagen" if self.language == "DE" else "Dışa aktarma başarısız"
-                    messagebox.showerror("Fehler" if self.language == "DE" else "Hata", error_msg)
+            # Kullanıcı iptal ettiyse
+            if not export_path:
+                return
+            
+            # Export işlemini gerçekleştir
+            success = self.create_eks_export(export_path)
+            
+            if success:
+                success_msg = f"EKS erfolgreich exportiert:\n{export_path}" if self.language == "DE" else f"EKS başarıyla dışa aktarıldı:\n{export_path}"
+                messagebox.showinfo("Erfolg" if self.language == "DE" else "Başarılı", success_msg)
+                self.update_customer_history()
+            else:
+                error_msg = "Export fehlgeschlagen. Bitte Template-Datei überprüfen." if self.language == "DE" else "Dışa aktarma başarısız. Lütfen şablon dosyasını kontrol edin."
+                messagebox.showerror("Fehler" if self.language == "DE" else "Hata", error_msg)
         
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             error_msg = f"Export Fehler: {str(e)}" if self.language == "DE" else f"Dışa Aktarma Hatası: {str(e)}"
             messagebox.showerror("Fehler" if self.language == "DE" else "Hata", error_msg)
     
