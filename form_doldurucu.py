@@ -15,6 +15,16 @@ import sys
 import tempfile
 import base64
 import template_data # Az önce oluşturduğumuz dosyayı import ediyoruz
+import sys
+import os
+
+# PyInstaller için path düzeltmesi
+if getattr(sys, 'frozen', False):
+    # PyInstaller bundle içindeyiz
+    os.environ['CUSTOMTKINTER_PATH'] = sys._MEIPASS
+    import customtkinter
+    customtkinter.set_appearance_mode("dark")
+    customtkinter.set_default_color_theme("blue")
 
 APP_VERSION = "v1.0.0"
 
