@@ -1587,66 +1587,42 @@ Konsol çıktısını kontrol edin."""
             messagebox.showerror("Fehler" if self.language == "DE" else "Hata", error_msg)
     
     def create_eks_export(self, export_path: str) -> bool:
-            """
-            Elde edilen verileri kullanarak EKS Excel dosyasını oluşturur.
-            Bu versiyon, Excel şablonunu doğrudan kodun içine gömülü veriden alır.
-            """
-            try:
-                # --- YENİ VE GARANTİLİ YÖNTEM BAŞLANGICI ---
-
-                # Adım 1: Koda gömülü metin verisini al ve çöz.
-                # 'template_data.py' dosyasındaki 'b64_data' değişkenini kullanıyoruz.
-                # base64.b64decode, bu uzun metni tekrar orijinal Excel dosyasının
-                # ikili (binary) verisine dönüştürür.
-                template_content = base64.b64decode(template_data.b64_data)
-
-                # Adım 2: Güvenli, geçici bir Excel dosyası oluştur.
-                # openpyxl kütüphanesi bir dosya yoluyla çalışmak zorundadır,
-                # bu yüzden çözdüğümüz bu ikili veriyi geçici bir dosyaya yazıyoruz.
-                # 'delete=False' önemlidir, çünkü bu, dosyayı biz silene kadar tutar.
-                # 'suffix='.xlsx'' ise dosyanın uzantısının doğru olmasını sağlar.
-                with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as temp_file:
-                    temp_file.write(template_content)
-                    # Geçici dosyanın tam yolunu bir değişkene atıyoruz.
-                    # Örn: C:\Users\Kullanıcı\AppData\Local\Temp\tmp123abc.xlsx
-                    template_path = temp_file.name
-                
-                # --- YÖNTEM SONU ---
-
-                # Adım 3: Geçici şablon dosyasını openpyxl ile aç.
-                # Kodun geri kalanı için her şey eskisi gibi. openpyxl, bunun geçici
-                # bir dosya olduğunu bilmez, normal bir Excel dosyası gibi davranır.
-                wb = openpyxl.load_workbook(template_path)
-                ws = wb.active
-                
-                # Adım 4: Formu doldurma işlemlerini çağır.
-                # Bu fonksiyonlar değişmedi, aynı şekilde çalışmaya devam ediyorlar.
-                success = self.fill_eks_template(ws)
-                if not success:
-                    os.remove(template_path) # Hata olursa bile geçici dosyayı sil
-                    return False
-                
-                self.update_customer_info_in_template(ws)
-                self.update_period_info_in_template(ws)
-                
-                # Adım 5: Doldurulmuş son halini kullanıcının istediği yere kaydet.
-                wb.save(export_path)
-                
-                # Adım 6: Temizlik.
-                # Artık işimiz bittiğine göre, oluşturduğumuz geçici dosyayı
-                # sistemden kalıcı olarak siliyoruz. Bu, gereksiz dosya birikimini önler.
+        """
+        Elde edilen verileri kullanarak EKS Excel dosyasını oluşturur.
+        Bu versiyon, Excel şablonunu doğrudan kodun içine gömülü veriden alır.
+        """
+        try:
+            # Adım 1-3: Template yükleme (değişiklik yok)
+            template_content = base64.b64decode(template_data.b64_data)
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as temp_file:
+                temp_file.write(template_content)
+                template_path = temp_file.name
+            
+            wb = openpyxl.load_workbook(template_path)
+            ws = wb.active
+            
+            # Adım 4: Formu doldur
+            success = self.fill_eks_template(ws)
+            if not success:
                 os.remove(template_path)
-                
-                # Her şey başarılı olduysa True döndür.
-                return True
-                
-            except Exception as e:
-                # Herhangi bir hata olursa konsola yazdır ve False döndür.
-                print(f"Template Export Hatası: {e}")
-                # Eğer hata sırasında geçici dosya hala varsa, onu silmeye çalış.
-                if 'template_path' in locals() and os.path.exists(template_path):
-                    os.remove(template_path)
                 return False
+            
+            # Adım 4.5: Güncellemeler
+            self.update_customer_info_in_template(ws)
+            self.update_period_info_in_template(ws)
+            self.update_month_headers_in_template(ws)  # ← YENİ SATIR BURAYA!
+            
+            # Adım 5-6: Kaydet ve temizle
+            wb.save(export_path)
+            os.remove(template_path)
+            
+            return True
+            
+        except Exception as e:
+            print(f"Template Export Hatası: {e}")
+            if 'template_path' in locals() and os.path.exists(template_path):
+                os.remove(template_path)
+            return False
     
     def fill_eks_template(self, ws) -> bool:
         """EKS template'indeki hücreleri doldurur"""
@@ -1685,6 +1661,17 @@ Konsol çıktısını kontrol edin."""
                 "B18": {"start_row": 67, "months_start_col": 3}
             }
             
+            # KRITIK: Seçilen ayları al (JUL-DEZ gibi)
+            selected_months = list(self.extracted_data.values())[0].get('months', [])
+            
+            # Ay-to-Kolon mapping'i oluştur
+            month_to_col_offset = {
+                'JAN': 0, 'FEB': 1, 'MRZ': 2, 'APR': 3, 'MAI': 4, 'JUN': 5,
+                'JUL': 0, 'AUG': 1, 'SEP': 2, 'OKT': 3, 'NOV': 4, 'DEZ': 5
+            }
+            
+            print(f"\nFilling template with months: {selected_months}")
+            
             for field, data in self.extracted_data.items():
                 if field.startswith('_'):
                     continue
@@ -1695,19 +1682,26 @@ Konsol çıktısını kontrol edin."""
                     start_col = pos["months_start_col"]
                     
                     values = data.get('values', [])
-                    for i, value in enumerate(values):
+                    
+                    # Her değeri doğru kolona yaz
+                    for i, (month, value) in enumerate(zip(selected_months, values)):
                         if value is not None and i < 6:
-                            col = start_col + i
+                            # Ayın Excel'deki kolon offset'ini hesapla
+                            col_offset = month_to_col_offset.get(month, i)
+                            col = start_col + col_offset
                             col_letter = chr(ord('A') + col - 1)
+                            
                             ws[f'{col_letter}{row}'] = value
                             ws[f'{col_letter}{row}'].number_format = '#,##0.00'
-                    
-                    print(f"Filled {field} at row {row}: {values}")
+                            
+                            print(f"  {field} - {month}: {value} -> {col_letter}{row}")
             
             return True
             
         except Exception as e:
             print(f"Template fill error: {e}")
+            import traceback
+            traceback.print_exc()
             return False
     
     def update_customer_info_in_template(self, ws):
@@ -1722,37 +1716,99 @@ Konsol çıktısını kontrol edin."""
     def update_period_info_in_template(self, ws):
         """Dönem bilgilerini template'e yazar"""
         try:
+            # Seçilen ayları al
             months = list(self.extracted_data.values())[0].get('months', [])
             if not months:
                 return
-                
+            
             month_to_number = {
                 'JAN': '01', 'FEB': '02', 'MRZ': '03', 'APR': '04', 
                 'MAI': '05', 'JUN': '06', 'JUL': '07', 'AUG': '08',
                 'SEP': '09', 'OKT': '10', 'NOV': '11', 'DEZ': '12'
             }
             
-            start_month_num = month_to_number.get(months[0], '01')
-            end_month_num = month_to_number.get(months[-1], '06')
+            # İlk ve son ayı al
+            start_month = months[0]
+            end_month = months[-1]
+            
+            start_month_num = month_to_number.get(start_month, '01')
+            end_month_num = month_to_number.get(end_month, '06')
             selected_year = self.selected_year
             
+            # Son günü hesapla (ay sonları farklı)
+            month_last_days = {
+                '01': '31', '02': '28', '03': '31', '04': '30',
+                '05': '31', '06': '30', '07': '31', '08': '31',
+                '09': '30', '10': '31', '11': '30', '12': '31'
+            }
+            end_day = month_last_days.get(end_month_num, '30')
+            
+            print(f"\nUpdating period info:")
+            print(f"  Start: 01.{start_month_num}.{selected_year}")
+            print(f"  End: {end_day}.{end_month_num}.{selected_year}")
+            
+            # Template'de "Bewilligungszeitraum" alanını bul ve güncelle
             for row in range(1, 20):
                 for col in range(1, 10):
                     cell = ws.cell(row=row, column=col)
                     if cell.value and "Bewilligungszeitraum vom" in str(cell.value):
                         original_text = str(cell.value)
+                        
+                        # Tarihleri güncelle
                         updated_text = original_text.replace(
                             "_01.0x.200x__", f"01.{start_month_num}.{selected_year}"
                         ).replace(
-                            "_3x.0x.200x__", f"30.{end_month_num}.{selected_year}"
+                            "_3x.0x.200x__", f"{end_day}.{end_month_num}.{selected_year}"
                         )
+                        
                         cell.value = updated_text
-                        print(f"Period updated: {updated_text}")
-                        break
+                        print(f"  Period cell updated at {chr(ord('A') + col - 1)}{row}: {updated_text}")
+                        return  # İlk bulduğumuzda çık
+            
+            print("  Warning: Bewilligungszeitraum cell not found")
                             
         except Exception as e:
             print(f"Period info update error: {e}")
+            import traceback
+            traceback.print_exc()
     
+    def update_month_headers_in_template(self, ws):
+        """Ay başlıklarını günceller (satır 9)"""
+        try:
+            months = list(self.extracted_data.values())[0].get('months', [])
+            if not months:
+                return
+            
+            # Tam ay isimleri (Almanca)
+            month_names_de = {
+                'JAN': 'Jan. 25', 'FEB': 'Feb. 25', 'MRZ': 'Mär. 25',
+                'APR': 'Apr. 25', 'MAI': 'Mai. 25', 'JUN': 'Jun. 25',
+                'JUL': 'Jul. 25', 'AUG': 'Aug. 25', 'SEP': 'Sep. 25',
+                'OKT': 'Okt. 25', 'NOV': 'Nov. 25', 'DEZ': 'Dez. 25'
+            }
+            
+            print(f"\nUpdating month headers for: {months}")
+            
+            # Satır 9'da ay başlıklarını güncelle (C9'dan başlayarak)
+            for i, month in enumerate(months[:6]):  # Maksimum 6 ay
+                col = 3 + i  # C=3, D=4, E=5, F=6, G=7, H=8
+                col_letter = chr(ord('A') + col - 1)
+                cell_address = f'{col_letter}9'
+                
+                # Yıl bilgisini dinamik yap
+                month_name = month_names_de.get(month, month)
+                month_with_year = month_name.replace('25', str(self.selected_year)[2:])  # 2025 -> 25
+                
+                ws[cell_address] = month_with_year
+                print(f"  {cell_address} = {month_with_year}")
+        
+        except Exception as e:
+            print(f"Month header update error: {e}")
+            import traceback
+            traceback.print_exc()
+
+
+
     def create_automatic_export(self, export_path: str) -> bool:
         """Fallback: Otomatik template oluşturur"""
         try:
