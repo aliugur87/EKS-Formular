@@ -521,7 +521,7 @@ class BWAParser:
                 for month in months:
                     if month in self.bwa_data.columns:
                         val = row[month]
-                        values.append(float(val) if pd.notna(val) and val != '' else None)
+                        values.append(abs(float(val)) if pd.notna(val) and val != '' else None)
                     else:
                         values.append(None)
                 return {'values': values}
@@ -590,7 +590,7 @@ class BWAParser:
                         if month in self.bwa_data.columns:
                             val = self.bwa_data.iloc[idx][month]
                             if pd.notna(val) and val != '' and val != 0:
-                                row_values.append(float(val))
+                                row_values.append(abs(float(val)))
                             else:
                                 row_values.append(0)
                     
